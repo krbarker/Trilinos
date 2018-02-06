@@ -27,6 +27,7 @@
 #include "Panzer_CheckBCConsistency.hpp"
 
 #include "Panzer_STK_CubeHexMeshFactory.hpp"
+#include "Panzer_STK_ExodusReaderFactory.hpp"
 #include "Panzer_STK_SetupLOWSFactory.hpp"
 #include "Panzer_STK_WorksetFactory.hpp"
 #include "Panzer_STKConnManager.hpp"
@@ -126,6 +127,7 @@ int main(int argc,char * argv[])
       bool use_ilu = false;
       bool use_refmaxwell = false;
       bool print_diagnostics = false;
+      std::string filename;
       int numTimeSteps = 1;
       Teuchos::CommandLineProcessor clp;
       clp.setOption("x-elements",&x_elements);
@@ -134,6 +136,7 @@ int main(int argc,char * argv[])
       clp.setOption("x-procs",&x_procs);
       clp.setOption("y-procs",&y_procs);
       clp.setOption("z-procs",&z_procs);
+      clp.setOption("filename",&filename);
       clp.setOption("basis-order",&basis_order);
       clp.setOption("cfl",&cfl);
       clp.setOption("workset-size",&workset_size);
@@ -152,31 +155,42 @@ int main(int argc,char * argv[])
       double min_dx = 1.0/std::max(x_elements,std::max(y_elements,z_elements));
       double dt = cfl*min_dx/c;
   
-      // set mesh factory parameters
-      panzer_stk::CubeHexMeshFactory mesh_factory;
-      RCP<Teuchos::ParameterList> pl = rcp(new Teuchos::ParameterList);
-      pl->set("X Blocks",1);
-      pl->set("Y Blocks",1);
-      pl->set("Z Blocks",1);
-      pl->set("X Elements",x_elements);
-      pl->set("Y Elements",y_elements);
-      pl->set("Z Elements",z_elements);
-      pl->set("X Procs",x_procs);
-      pl->set("Y Procs",y_procs);
-      pl->set("Z Procs",z_procs);
-  
-      // periodic boundaries
-      //      Teuchos::ParameterList& per_pl = pl->sublist("Periodic BCs");
-      //      per_pl.set("Count", 3);
-      //      per_pl.set("Periodic Condition 1", "xy-all 1e-8: front;back");
-      //      per_pl.set("Periodic Condition 2", "xz-all 1e-8: top;bottom");
-      //      per_pl.set("Periodic Condition 3", "yz-all 1e-8: left;right");
-  
-      mesh_factory.setParameterList(pl);
-  
-      // build mesh
-      RCP<panzer_stk::STK_Interface> mesh = mesh_factory.buildUncommitedMesh(MPI_COMM_WORLD);
-  
+      RCP<panzer_stk::STK_Interface> mesh;
+      Teuchos::RCP<panzer_stk::STK_MeshFactory> mesh_factory;
+      if ( filename != "") { // Exodux file reader...
+        std::cout << "Reading from mesh file "<<filename<<std::endl;
+        RCP<Teuchos::ParameterList> pl = rcp(new Teuchos::ParameterList);
+        pl->set("File Name", filename);
+        mesh_factory = Teuchos::RCP<panzer_stk::STK_MeshFactory>(new panzer_stk::STK_ExodusReaderFactory());
+        mesh_factory->setParameterList(pl);
+        // build mesh
+        mesh = mesh_factory->buildUncommitedMesh(MPI_COMM_WORLD);
+      } else { // Inline mesh generator
+        // set mesh factory parameters
+        mesh_factory = Teuchos::RCP<panzer_stk::STK_MeshFactory>(new panzer_stk::CubeHexMeshFactory());
+        RCP<Teuchos::ParameterList> pl = rcp(new Teuchos::ParameterList);
+        pl->set("X Blocks",1);
+        pl->set("Y Blocks",1);
+        pl->set("Z Blocks",1);
+        pl->set("X Elements",x_elements);
+        pl->set("Y Elements",y_elements);
+        pl->set("Z Elements",z_elements);
+        pl->set("X Procs",x_procs);
+        pl->set("Y Procs",y_procs);
+        pl->set("Z Procs",z_procs);
+
+        // periodic boundaries
+        //      Teuchos::ParameterList& per_pl = pl->sublist("Periodic BCs");
+        //      per_pl.set("Count", 3);
+        //      per_pl.set("Periodic Condition 1", "xy-all 1e-8: front;back");
+        //      per_pl.set("Periodic Condition 2", "xz-all 1e-8: top;bottom");
+        //      per_pl.set("Periodic Condition 3", "yz-all 1e-8: left;right");
+
+        mesh_factory->setParameterList(pl);
+
+        // build mesh
+        mesh = mesh_factory->buildUncommitedMesh(MPI_COMM_WORLD);
+    }
       // data container for auxiliary linear operators used in preconditioning (mass matrix and gradient)
       Teuchos::RCP<panzer::GlobalEvaluationDataContainer> auxGlobalData = Teuchos::rcp(new panzer::GlobalEvaluationDataContainer);
   
@@ -244,7 +258,7 @@ int main(int argc,char * argv[])
   
       // Add fields to the mesh data base (this is a peculiarity of how STK classic requires the
           // fields to be setup)
-      createExodusFile(physicsBlocks, Teuchos::rcpFromRef(mesh_factory), mesh, exodus_output);
+      createExodusFile(physicsBlocks, mesh_factory, mesh, exodus_output);
   
       // build worksets
       Teuchos::RCP<panzer_stk::WorksetFactory> wkstFactory
